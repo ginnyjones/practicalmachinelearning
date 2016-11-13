@@ -1,0 +1,176 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "ginnyjones"
+date: "13 November 2016"
+output: html_document
+---
+
+# 1. Introduction
+
+This webpage is my solution to the end of course assignment for the John Hopkins University Coursera course on Practical Machine Learning.
+
+Students are provided with a training and a testing dataset and tasked to predict the response variable "classe" based on the other variables available to them. The asignment is marked based on:
+
+* peer review of the analysis (as presented here); and
+* the ability to predict "classe" in a quiz on the 20 cases included in the testing dataset.
+
+# 2. The Data
+
+The two datasets were copied into the project working directory from the following sources:
+
+* The training dataset <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+* The testing dataset <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+And were then read into R
+
+```{r Read data}
+training <- read.csv('pml-training.csv')
+testing  <- read.csv('pml-testing.csv')
+ 
+dim(training); dim(testing)
+```
+
+```{r temp calcs, echo=FALSE}
+rows <- nrow(training)
+cols <- ncol(training)
+```
+
+The full training dataset has `r rows` rows and `r cols` columns. The testing dataset has 20 rows and is for submission to the online quiz used as the other part of the student assessment. The response variable "classe" is the last column in the training dataset. In the testing dataset it is replaced by "problem_id", an integer from 1 to 20.
+
+Given the large number of data, the two .csv datasets were opened in a spreadsheet package and visually inspected. The fix() function could have also been used. This visual inspection revealed that:
+
+* the first 7 columns are identification, rather than measurement, data and were not needed for the prediction modelling;
+* there are columns in the training dataset with integer or numeric variables that contain a large number of NA values;
+* all the columns in the training dataset with factor variables, other than "classe", have many blank values;
+* in the testing dataset the corresponding columns to these numeric/integer and factor variables were all NA or blank.
+
+Therefore these columns (first 7, all factor variables and numeric/integer variables with NAs) were removed from both datasets, leaving the response variable and 52 "good" predictor variables.
+
+```{r remove columns}
+# Remove the row identifiers (user_name, timestamps etc.)
+training <- training[,-c(1:7)]
+testing <- testing[,-c(1:7)]
+
+# Remove the columns with NA values
+na.data <- is.na(training)
+good.cols <- colSums(na.data) == 0
+training <- training[, good.cols]
+testing <- testing[, good.cols]
+
+# Remove the factor columns by retaining numeric and integer
+good.cols <- rep(FALSE,ncol(training))
+for (i in 1:ncol(training)) {
+    good.cols[i] <- (is.numeric(training[,i]) | is.integer(training[,i]))
+}
+good.cols[ncol(training)] <- TRUE # but also keep the last col = "classe"/"problem_id"
+
+training <- training[,good.cols]
+testing <- testing[,good.cols]
+
+dim(training); dim(testing)
+```
+
+```{r tidy up 1, echo=FALSE}
+rm(rows, cols, na.data, good.cols)
+```
+
+# 3. Exploratory Analysis
+
+Having cleaned the datasets, exploratory analysis was performed on the training dataset to see if there are any obvious patterns in the data e.g.
+
+* What is the distribution of each of the 52 predictor variables?
+* What correlation is there between the 5 values, A,B,C,D and E, of "classe" and the 52 predictor variables?
+
+52 histograms and 52 box plots were created and nothing obvious could be seen i.e. no 5-fold modality. As an example, the results for column 52 are shown below.
+
+```{r exploratory plots}
+colname <- names(training)[52]
+hist(training[,52],main=paste("Histogram of ",colname,sep=" "),xlab = colname)
+boxplot(training[,52] ~ classe, data = training, main=paste("Boxplot of ",colname,sep=" "), xlab = "classe")
+```
+
+# 4. Predictive Modelling
+
+The problem is to predict the response variable "classe", a classification variable which can take 5 values: A, B, C, D and E.
+
+## 4.1 Cross Validation
+
+The first thing to do was to reserve some of the training data to test the model once it has been fitted to the training data. The course guideline is to split the training dataset 60:40. As there is already a test dataset, the 40% sample was denoted as the validation dataset. The pass mark for the course is 80% so the target fit to the validation dataset should be at least 80%. 
+
+```{r create validation dataset}
+library(caret)
+set.seed(1234)
+split <- createDataPartition(training$classe, p = .6, list=FALSE)
+training.temp <- training[split,]
+validation <- training[-split,]
+training <- training.temp
+
+dim(training); dim(validation)
+```
+
+```{r tidy up 2, echo=FALSE}
+rm(colname, split, training.temp)
+```
+
+## 4.2 Choosing a Model
+
+There are a number of prediction algorithms that can be used for classification problems like this. The three fundamental approaches covered in the course are:
+
+* Decisions Trees (rpart)
+* Linear Discriminant Analysis (lda)
+* Naive Bayes (nb)
+
+Modelling using decision trees is shown below. The plot shows that the fitted model could not predict classe = D. This consequently led to low accuracy against the validation dataset as shown by the confusion matrix.
+
+```{r decision tree, cache=TRUE}
+rpart.modFit <- train(classe ~ ., method = "rpart", data = training)
+library(rattle)
+fancyRpartPlot(rpart.modFit$finalModel, main = "Fitted Decision Tree", sub="")
+validation.predict <- predict(rpart.modFit,validation)
+confusionMatrix(validation.predict, validation$classe)
+```
+
+Similarly low accuracy was obtained when using linear discriminant analysis (lda) and naive bayes (nb). This indicated that methods that made use of aggregation or boosting would be required. The two suggested in the course are:
+
+* Random Forest (rf); and
+* Gradient Boosting (gbm)
+
+Both were tried using their default parameters. In both cases the model was fitted using the training dataset (i.e. 60% of the original training data provided). The model was then used to predict the training and validation datasets and the accuracies were compared using confusion matrices.
+
+## 4.3 Random Forest
+
+```{r random forest, cache=TRUE}
+rf.modFit <- train(classe ~ ., method = "rf", data = training)
+training.predict <- predict(rf.modFit,training)
+confusionMatrix(training.predict, training$classe)
+validation.predict <- predict(rf.modFit,validation)
+confusionMatrix(validation.predict, validation$classe)
+```
+
+## 4.4 Gradient Boosting
+
+```{r gradient boosting, cache=TRUE}
+gbm.modFit <- train(classe ~ ., method = "gbm", data = training, verbose = FALSE)
+training.predict <- predict(gbm.modFit,training)
+confusionMatrix(training.predict, training$classe)
+validation.predict <- predict(gbm.modFit,validation)
+confusionMatrix(validation.predict, validation$classe)
+```
+
+## 4.5 Comparison
+
+Comparing the results from the confusion matrices for the random forest and gradient boosting it can be seen that random forest gave higher accuracy for both:
+
+* the training data (100% compared with 97.55% for gradient boosting); and
+* the validation data (98.98% compared with 96.24% for gradient boosting).
+
+
+# 5. Testing
+
+Based on the comparison above, random forest was used to model the data and predict for the 20 cases in the testing dataset. The predicted test accuracy was greater than 98% i.e. for the 20 test cases, either 19 or all 20 correct.
+
+The actual result was 20 out of 20 correct.
+
+# 6. Conclusion
+
+A large training dataset was provided to predict the response variable 'classe' for 20 test cases. Both the training and testing datasets were cleaned to remove columns containing irrelevant or large amounts of unusable (NA or blank) data. Exploratory data analysis of the cleaned datasets did not reveal any obvious patterns in the data to predict 'classe' based on single variables. Consequently a variety of models were fitted to a subset (60%) of the original dataset while 40% of the data was held back for cross-validation. Random forest provided the highest modeling accuracy for both the training and validation datasets and was therefore used to predict the response for the 20 test cases in the testing dataset. A perfect score of 20 out of 20 was achieved.
